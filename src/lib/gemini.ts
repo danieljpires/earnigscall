@@ -94,15 +94,10 @@ function chunkTextWithOverlap(text: string, maxLength: number, overlap: number =
     
     // Safety check to prevent infinite loop
     if (startIndex < 0) startIndex = 0;
-    // Ensure we are making progress (startIndex must increase)
-    if (startIndex <= chunks[chunks.length - 1].length - overlap) {
-       // if we are stuck, just move forward
-    }
-    
-    // Actually, a simpler way to ensure progress:
+    // ensure progress
     const nextStart = endIndex - overlap;
     if (nextStart <= startIndex) {
-        startIndex = endIndex; // Force jump
+        startIndex = endIndex; 
     } else {
         startIndex = nextStart;
     }
@@ -112,7 +107,6 @@ function chunkTextWithOverlap(text: string, maxLength: number, overlap: number =
 
 /**
  * Step 1: Generate high-level synthesis (Summary, Scores, Themes)
- * Slimmed prompt for faster processing and lower token cost.
  */
 async function generateSynthesis(
   ticker: string,
@@ -169,8 +163,6 @@ Output JSON:
     return JSON.parse(rawText.replace(/```json|```/g, "").trim());
   } catch (err) {
     console.error(`[Gemini:JSON] Error parsing response for ${ticker}:`, err);
-    console.log(`[Gemini:RawResponse] Start:`, rawText.substring(0, 500));
-    console.log(`[Gemini:RawResponse] End:`, rawText.substring(rawText.length - 500));
     throw new Error("Falha na síntese da IA (JSON malformado). Tente novamente.");
   }
 }
@@ -179,7 +171,7 @@ Output JSON:
  * Helper to identify the Q&A section start
  */
 export function getQASection(fullTranscript: string, isManual: boolean = false): string {
-  if (isManual) return fullTranscript; // Manual pastes are the section
+  if (isManual) return fullTranscript; 
   
   const lowerText = fullTranscript.toLowerCase();
   const keywords = [
@@ -193,58 +185,38 @@ export function getQASection(fullTranscript: string, isManual: boolean = false):
     if (idx !== -1 && (qaStart === -1 || idx < qaStart)) qaStart = idx; 
   }
   
-  // Robustness check: If keyword is at the very end (last 10%), it's a false positive
   if (qaStart > fullTranscript.length * 0.9) qaStart = -1;
-
-  // Buffer: take 1500 chars before start to ensure we catch the very first analyst question even if the header was right after it
   const startBuffer = 1500; 
   return fullTranscript.substring(qaStart !== -1 ? Math.max(0, qaStart - startBuffer) : 0);
 }
 
 /**
- * Radical Transcript Cleaning Logic: Removes boilerplate to save tokens and prioritize signal.
+ * Radical Transcript Cleaning Logic
  */
 export function cleanTranscript(text: string): string {
   if (!text) return "";
   
   return text
-    // 1. Operator & Logistics Boilerplate (Extreme)
     .replace(/(Operator|Host)[:\s]+[^.]*(ladies and gentlemen|thank you for standing by|welcome to the|listen-only mode|turn the conference over|press star-one|please standby|the floor is now open|at this time)[^.]*\./gi, "[Intro Snipped]")
     .replace(/\[\d+\][:\s]+(\(Operator Instructions\)|Thank you|Our next question|Go ahead|Please proceed)\./gi, "")
-
-    
-    // Keeping "Our next question" as a marker for the LLM during QA extraction
-    // .replace(/(Our next question|your next question|The first question|The next question)( comes from|is from)[^.]*\./gi, "")
-
-    // Keeping "Analyst: Hi" as a marker for the LLM
-    
-    // 3. Legal/Safe Harbor (Slimmed)
     .replace(/Before we begin, I'd like to remind everyone that some of the statements made today are forward-looking statements.*/gi, "[Safe Harbor Snipped]")
     .replace(/These statements involve risks and uncertainties that could cause actual results to differ materially.*/gi, "")
     .replace(/statements regarding our future performance, financial condition[^.]*\./gi, "")
-    
-    // 4. Participant Lists (Only if long and clearly a list)
     .replace(/^(Conference Call Participants|Corporate Participants|Analysts)[:\s]+[^]{200,8000}?(?=\n\n|\n[A-Z][a-z]+ [A-Z][a-z]+ —)/gm, "[Participants List Snipped]")
-
-    
-    // 5. Cleanup
-    .replace(/\[[^\]]*\]/g, "") // Remove bracketed metadata [01:23:45]
+    .replace(/\[[^\]]*\]/g, "") 
     .replace(/\n{2,}/g, "\n\n")
     .trim();
 }
 
 /**
  * Returns the chunks for parallel/incremental Q&A processing.
- * IMPROVED: Uses "Smart Split" based on markers to avoid cutting questions mid-flow.
+ * SUPER-BLOCK 100k
  */
 export function getQAChunks(qaSection: string, isManual: boolean = false): string[] {
   if (isManual) {
-     const size = 15000;
-     const overlap = 5000;
-     return chunkTextWithOverlap(qaSection, size, overlap);
+     return chunkTextWithOverlap(qaSection, 80000, 20000);
   }
 
-  // 1. Identify all potential analyst transition markers (Total Security List)
   const markers = [
     /\nOperator:/gi,
     /Our first question/gi,
@@ -267,74 +239,24 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
     /please stand by for/gi,
     /to allow for questions/gi,
     /Your line is now open/gi,
-    /\n[A-Z][a-zA-Z\s\.\,]+ [A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, // Standard Name Prefix
-    /\n[A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, // Generic Speaker Start
-    /\[\d+\][:\s]+/g // Metadata tags often at start of speaker
+    /\n[A-Z][a-zA-Z\s\.\,]+ [A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, 
+    /\n[A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g,
+    /\[\d+\][:\s]+/g 
   ];
 
-  const size = isManual ? 80000 : 100000;
+  const size = 100000;
   const overlap = 15000;
   
-  // If the total text is less than 120k, just return one chunk to ensure 100% context
   if (qaSection.length < 120000) {
     console.log(`[Gemini:Split] Transcript fits in single super-block (${qaSection.length} chars). 100% context preserved.`);
     return [qaSection];
   }
 
-  const chunks: string[] = [];
-  const TARGET_SIZE = size;
-  
-  // Basic character-based split with marker-awareness for very large transcripts
-  return chunkTextWithOverlap(qaSection, TARGET_SIZE, overlap);
+  return chunkTextWithOverlap(qaSection, size, overlap);
 }
 
 /**
  * Step 2: Q&A Extraction from chunk. Global Turn-Based Strategy.
- */
-export async function extractQAFromChunk(
-  ticker: string,
-  chunk: string,
-  languageName: string,
-  chunkIndex: number,
-  totalChunks: number,
-  knownAnalysts?: string[]
-): Promise<any[]> {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-flash-latest",
-    generationConfig: { 
-      responseMimeType: "application/json",
-      maxOutputTokens: 8192 
-    }
-  });
-
-  console.log(`[Gemini:Turbo] Processing Chunk ${chunkIndex+1}/${totalChunks} (${chunk.length} chars)...`);
-  
-  const prompt = `
-Extract EVERY analyst interaction from this ${ticker} segment. 
-MANDATORY: NO SUMMARIES. Extract 100% of questions and 100% of answers.
-Translate results correctly to ${languageName} (Portuguese from Portugal).
-
-CRITICAL EXTRACTION LOGIC:
-1. An interaction begins when an analyst/participant asks a question.
-2. It ends when the executive completes their response.
-3. If the SAME analyst asks a second question (follow-up) after the response, YOU MUST EXTRACT IT AS A NEW, SEPARATE OBJECT in the JSON array.
-4. Each analytical "turn" (Question -> Answer) must be a distinct JSON object.
-
-Output must be a valid JSON array of objects with fields: 
-id (uuid), questionBy (Analyst Name), answeredBy (Executive Name), question (Full Question), answer (Full Answer), importanceDescription (1-sentence summary), sentimentScore (0-1), behavioralLabel.
-
-Segment to process:
----
-${chunk}
----
-`;
-
-  console.log(`[Gemini:Split] Generated ${chunks.length} smart chunks.`);
-  return chunks;
-}
-
-/**
- * Step 2: Q&A Extraction from chunk. Restored instructions for better pattern recognition.
  */
 export async function extractQAFromChunk(
   ticker: string,
@@ -396,26 +318,20 @@ export async function generateGeminiReport(
     const synthesis = await generateSynthesis(ticker, fullTranscript, localAnalysis, languageName, previousCallInsight);
     const qaSection = getQASection(fullTranscript);
     
-    // HEURISTIC: identify all potential analyst speakers to guide Gemini
     const knownAnalysts = mapAnalystParticipants(fullTranscript);
-    console.log(`[Gemini:Turbo] Integrity Check: Identified ${knownAnalysts.length} potential speakers.`);
-
     const chunks = getQAChunks(qaSection);
     const results = await Promise.all(chunks.map((c, i) => extractQAFromChunk(ticker, c, languageName, i, chunks.length, knownAnalysts)));
     
     const seen = new Set();
     const uniqueQA = results.flat().filter(qa => {
-      if (!qa.question || qa.question.length < 10) return false; // Ignore noise
+      if (!qa.question || qa.question.length < 10) return false; 
       
-      // Robust Dedup: use question signature (First 200 + Last 200) + Analyst
-      // This allows analysts to ask multiple questions while catching redundant extractions
       const analystKey = (qa.questionBy || "unknown").toLowerCase().substring(0, 30).trim();
       const qText = qa.question.toLowerCase().trim();
       const questionKey = qText.length > 400 
         ? qText.substring(0, 200) + "---" + qText.substring(qText.length - 200)
         : qText;
 
-      // Also consider the answer start to differentiate follow-ups
       const answerKey = (qa.answer || "").substring(0, 150).toLowerCase().trim();
       const compositeKey = `${analystKey}|${questionKey}|${answerKey}`;
       
