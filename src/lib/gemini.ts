@@ -4,10 +4,6 @@ import { mapAnalystParticipants } from "./transcript-parser";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-/**
- * Professional JSON Recovery: Extracts first valid JSON object from string.
- * Resilient against AI adding headers/footers.
- */
 function extractJsonObject(text: string): any {
   try {
     const cleaned = text.replace(/```json|```/g, "").trim();
@@ -25,9 +21,6 @@ function extractJsonObject(text: string): any {
   }
 }
 
-/**
- * Robustly recovers valid JSON objects from a potentially truncated JSON array string.
- */
 export function recoverPartialJson(text: string): any[] {
   try {
     const cleaned = text.replace(/```json|```/g, "").trim();
@@ -66,9 +59,6 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries: number = 3): P
   throw lastError;
 }
 
-/**
- * Synthesis Engine (v9 - Optimized for Vercel Hobby 10s Limit)
- */
 export async function generateSynthesis(
   ticker: string,
   transcript: string,
@@ -80,38 +70,32 @@ export async function generateSynthesis(
     generationConfig: { 
       responseMimeType: "application/json",
       maxOutputTokens: 2048,
-      temperature: 0.1 // High precision, less tokens wasted
+      temperature: 0.1
     }
   });
 
-  // Limit to 65k to ensure response under 8s (Vercel Hobby Safety)
   const snippet = transcript.substring(0, 65000);
 
   const prompt = `
   Analyze ${ticker} earnings call. Output professional investor synthesis in ${languageName}.
-  
-  CONTEXT:
-  ${snippet}
-
+  CONTEXT: ${snippet}
   Output JSON keys EXACTLY:
   {
-    "executiveSummary": "Paragraph.",
-    "managementOutlook": "Meaningful strategist perspective.",
-    "positives": ["3-5 facts/achievements"],
-    "negatives": ["3-5 risks/downsides"],
-    "driversToWatch": [{ "driver": "Variable name", "description": "Why it matters" }],
-    "sentimentNarrative": "Tone analysis.",
-    "behavioralRead": "Management behavior.",
-    "bullishCase": "2 sentences.",
-    "bearishCase": "2 sentences.",
-    "biggestRisk": "One sentence.",
-    "biggestOpportunity": "One sentence.",
-    "finalTakeaway": "Conclusion.",
+    "executiveSummary": "...",
+    "managementOutlook": "...",
+    "positives": ["3-5 facts"],
+    "negatives": ["3-5 facts"],
+    "driversToWatch": [{ "driver": "Name", "description": "Why" }],
+    "sentimentNarrative": "...",
+    "behavioralRead": "...",
+    "bullishCase": "...",
+    "bearishCase": "...",
+    "biggestRisk": "...",
+    "biggestOpportunity": "...",
+    "finalTakeaway": "...",
     "scores": { "sentiment": 50, "confidence": 50, "defensiveness": 50, "risk": 50, "outlook": 50 },
-    "keyThemes": ["Tech", "Margins"]
+    "keyThemes": ["Tech"]
   }
-
-  CRITICAL: Do not return empty arrays for positives or driversToWatch. Extract facts from context.
   `;
 
   const result = await callWithRetry(() => model.generateContent(prompt));
@@ -127,8 +111,7 @@ export function getQASection(fullTranscript: string, isManual: boolean = false):
     const idx = lowerText.indexOf(k);
     if (idx !== -1 && (qaStart === -1 || idx < qaStart)) qaStart = idx; 
   }
-  const startBuffer = 1000; 
-  return fullTranscript.substring(qaStart !== -1 ? Math.max(0, qaStart - startBuffer) : 0);
+  return fullTranscript.substring(qaStart !== -1 ? Math.max(0, qaStart - 1000) : 0);
 }
 
 export function cleanTranscript(text: string): string {
@@ -140,21 +123,17 @@ export function cleanTranscript(text: string): string {
     .trim();
 }
 
-function chunkTextWithOverlap(text: string, maxLength: number, overlap: number = 2000): string[] {
+export function getQAChunks(qaSection: string, isManual: boolean = false): string[] {
+  const size = isManual ? 80000 : 60000;
   const chunks: string[] = [];
   let start = 0;
-  while (start < text.length) {
-    let end = start + maxLength;
-    chunks.push(text.substring(start, end));
-    if (end >= text.length) break;
-    start = end - overlap;
-    if (start < 0) start = 0;
+  while (start < qaSection.length) {
+    let end = start + size;
+    chunks.push(qaSection.substring(start, end));
+    if (end >= qaSection.length) break;
+    start = end - 8000;
   }
   return chunks;
-}
-
-export function getQAChunks(qaSection: string, isManual: boolean = false): string[] {
-  return chunkTextWithOverlap(qaSection, isManual ? 80000 : 60000, 8000);
 }
 
 export async function extractQAFromChunk(
@@ -167,22 +146,45 @@ export async function extractQAFromChunk(
 ): Promise<any[]> {
   const model = genAI.getGenerativeModel({
     model: "gemini-1.5-flash", 
-    generationConfig: { 
-      responseMimeType: "application/json",
-      maxOutputTokens: 8192 
-    }
+    generationConfig: { responseMimeType: "application/json", maxOutputTokens: 8192 }
   });
 
-  const prompt = `Extract ALL Q&A from ${ticker} segment. Translate to ${languageName}.
-  Segment:
-  ${chunk}
-  Output JSON array (id, questionBy, answeredBy, question, answer, importanceDescription, sentimentScore, behavioralLabel).`;
+  const prompt = `Extract ALL Q&A from ${ticker} segment. Translate to ${languageName}.\nSegment:\n${chunk}\nOutput JSON array (id, questionBy, answeredBy, question, answer, importanceDescription, sentimentScore, behavioralLabel).`;
 
   try {
     const result = await callWithRetry(() => model.generateContent(prompt));
     return recoverPartialJson(result.response.text());
   } catch (e) {
     return [];
+  }
+}
+
+/**
+ * RESTORED MISSING FUNCTION: This was the cause of the white screen / no results.
+ */
+export async function generateGeminiReport(
+  ticker: string, 
+  fullTranscript: string,
+  localAnalysis: LocalAnalysisResult,
+  language: string
+) {
+  const languageName = getLanguageName(language);
+  try {
+    const synthesis = await generateSynthesis(ticker, fullTranscript, localAnalysis, languageName);
+    const qaSection = getQASection(fullTranscript);
+    const chunks = getQAChunks(qaSection);
+    
+    // Sequential fallback for safe tokens
+    const results: any[][] = [];
+    for (let i = 0; i < chunks.length; i++) {
+        const res = await extractQAFromChunk(ticker, chunks[i], languageName, i, chunks.length);
+        results.push(res);
+    }
+    
+    return { ...synthesis, qaAnalysis: results.flat() };
+  } catch (error) {
+    console.error("Gemini Report Pipeline Error:", error);
+    throw error;
   }
 }
 
