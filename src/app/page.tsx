@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLanguage } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/ui/language-switcher";
@@ -19,125 +19,80 @@ function HomeContent() {
   const [manualTicker, setManualTicker] = useState("");
   const [manualText, setManualText] = useState("");
   const [progress, setProgress] = useState(0);
-  const [loadingStep, setLoadingStep] = useState(0);
-
-  const fetchWithRetry = async (url: string, options: any, maxRetries = 2): Promise<Response> => {
-    let lastErr: any;
-    for (let i = 0; i <= maxRetries; i++) {
-      try {
-        const res = await fetch(url, options);
-        if (res.status >= 500 && i < maxRetries) {
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
-        }
-        return res;
-      } catch (err) {
-        lastErr = err;
-        if (i < maxRetries) {
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
-        }
-      }
-    }
-    throw lastErr || new Error("Connection failed");
-  };
 
   const handleAnalyze = async (ticker: string, manualTranscript?: string, companyName?: string) => {
     setIsLoading(true);
     setError(null);
     setReport(null);
-    setProgress(10);
-    setLoadingStep(1);
+    setProgress(20);
 
     try {
-      const res = await fetchWithRetry("/api/earnings-call", {
+      // PHASE 1: Combined Synthesis (Summary, Drivers, Outlook)
+      // This call now waits for Gemini to finish the main analysis!
+      const res = await fetch("/api/earnings-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker, language, manualTranscript, companyName }),
       });
 
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: "Server Error" }));
-        throw new Error(errData.error || "Failed to load transcript");
+        const errData = await res.json().catch(() => ({ error: "Erro de Servidor" }));
+        throw new Error(errData.error || "A API do Gemini ou o servidor falhou.");
       }
 
       const data = await res.json();
-      if (!data.report) throw new Error("Invalid response from server");
+      if (!data.report) throw new Error("Resposta inválida do servidor.");
 
+      // Show results immediately
       setReport(data.report);
-      setProgress(40);
+      setProgress(60);
 
-      // Start Parallel Synthesis and Q&A
-      if (data.report.isPartial) {
-        setLoadingStep(5);
-        
-        // 1. Synthesis Task
-        const synthPromise = (async () => {
+      // PHASE 2: Background Q&A Extraction
+      if (data.report.isPartial && data.report.geminiAnalysis?.chunkCount > 0) {
+        const total = data.report.geminiAnalysis.chunkCount;
+        // Process only first few chunks for background extraction to stay safe
+        for (let i = 0; i < Math.min(total, 5); i++) {
           try {
-            const sRes = await fetch("/api/analysis/synthesis", {
+            const qRes = await fetch("/api/analysis/qa", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                ticker,
-                year: data.report.year,
+                ticker, 
+                year: data.report.year, 
                 quarter: data.report.quarter,
-                language,
-                overallSentiment: data.report.localAnalysis?.overallSentiment
+                chunkIndex: i, 
+                language, 
+                isManual: !!manualTranscript
               }),
             });
-            if (sRes.ok) {
-              const sData = await sRes.json();
-              if (sData.synthesis) {
-                setReport(prev => prev ? {
-                  ...prev,
-                  geminiAnalysis: { ...prev.geminiAnalysis, ...sData.synthesis }
-                } : null);
+            if (qRes.ok) {
+              const qData = await qRes.json();
+              if (qData.qaAnalysis) {
+                setReport(prev => {
+                  if (!prev) return null;
+                  const currentQA = prev.geminiAnalysis.qaAnalysis || [];
+                  return {
+                    ...prev,
+                    geminiAnalysis: {
+                      ...prev.geminiAnalysis,
+                      qaAnalysis: [...currentQA, ...qData.qaAnalysis],
+                      extractedQuestionCount: currentQA.length + qData.qaAnalysis.length
+                    }
+                  };
+                });
               }
             }
-          } catch (e) { console.error("Synthesis failed", e); }
-        })();
-
-        // 2. Q&A Task (First 2 chunks only for speed)
-        const qaPromise = (async () => {
-           const chunks = data.report.geminiAnalysis?.chunkCount || 0;
-           for (let i = 0; i < Math.min(chunks, 3); i++) {
-             try {
-               const qRes = await fetch("/api/analysis/qa", {
-                 method: "POST",
-                 headers: { "Content-Type": "application/json" },
-                 body: JSON.stringify({
-                   ticker, year: data.report.year, quarter: data.report.quarter,
-                   chunkIndex: i, language, isManual: !!manualTranscript
-                 }),
-               });
-               if (qRes.ok) {
-                 const qData = await qRes.json();
-                 if (qData.qaAnalysis) {
-                   setReport(prev => {
-                     if (!prev) return null;
-                     const currentQA = prev.geminiAnalysis.qaAnalysis || [];
-                     return {
-                       ...prev,
-                       geminiAnalysis: {
-                         ...prev.geminiAnalysis,
-                         qaAnalysis: [...currentQA, ...qData.qaAnalysis]
-                       }
-                     };
-                   });
-                 }
-               }
-             } catch (e) {}
-             setProgress(prev => Math.min(prev + 20, 95));
-           }
-        })();
-
-        await Promise.all([synthPromise, qaPromise]);
+          } catch (e) {
+            console.error("QA Chunk failed:", i);
+          }
+          setProgress(prev => Math.min(prev + 10, 95));
+        }
       }
       
       setProgress(100);
-      setLoadingStep(6);
     } catch (err: any) {
-      setError(err.message || "An unexpected error occurred");
+      console.error("Analysis Failed:", err);
+      setError(err.message || "Ocorreu um erro inesperado na análise.");
     } finally {
       setIsLoading(false);
     }
@@ -156,14 +111,14 @@ function HomeContent() {
       </header>
 
       <section className="mx-auto max-w-4xl px-6 pt-12 pb-12 text-center">
-         <div className="flex justify-center mb-8">
+        <div className="flex justify-center mb-8">
            <img src="/logo.png" alt="Logo" className="h-24 w-auto dark:brightness-200" />
         </div>
-        <h2 className="text-4xl font-extrabold text-gray-900 dark:text-gray-50 mb-4">{t("heroTitle")}</h2>
+        <h2 className="text-4xl font-extrabold text-gray-900 dark:text-gray-50 mb-8">{t("heroTitle")}</h2>
         
         {!isLoading && (
           <div className="flex justify-center mb-6">
-            <button onClick={() => setInputMode(inputMode === "ticker" ? "manual" : "ticker")} className="text-blue-600 font-medium">
+            <button onClick={() => setInputMode(inputMode === "ticker" ? "manual" : "ticker")} className="text-blue-600 font-medium bg-blue-50 dark:bg-blue-900/30 px-4 py-2 rounded-full">
               {inputMode === "ticker" ? t("toggleToManual") : t("toggleToSearch")}
             </button>
           </div>
@@ -172,32 +127,42 @@ function HomeContent() {
         {inputMode === "ticker" ? (
           <TickerAutocomplete onSelect={(t, name) => handleAnalyze(t, undefined, name)} isLoading={isLoading} />
         ) : (
-          <div className="space-y-4 max-w-2xl mx-auto text-left">
-            <input value={manualTicker} onChange={e => setManualTicker(e.target.value)} placeholder="Ticker (ex: MSFT)" className="w-full p-4 rounded-xl border dark:bg-gray-900" />
-            <textarea rows={6} value={manualText} onChange={e => setManualText(e.target.value)} placeholder="Cole aqui a transcrição..." className="w-full p-4 rounded-xl border dark:bg-gray-900" />
-            <button onClick={() => handleAnalyze(manualTicker, manualText)} className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold">Analisar</button>
+          <div className="space-y-4 max-w-2xl mx-auto text-left bg-white dark:bg-gray-900 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800">
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Ticker</label>
+              <input value={manualTicker} onChange={e => setManualTicker(e.target.value)} placeholder="MSFT" className="w-full p-4 rounded-xl border dark:border-gray-700 dark:bg-gray-800" />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Transcrição</label>
+              <textarea rows={6} value={manualText} onChange={e => setManualText(e.target.value)} placeholder="Cole aqui..." className="w-full p-4 rounded-xl border dark:border-gray-700 dark:bg-gray-800 font-mono text-xs" />
+            </div>
+            <button onClick={() => handleAnalyze(manualTicker, manualText)} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg transition-transform active:scale-95">Analisar Chamada</button>
           </div>
         )}
 
         {isLoading && (
-          <div className="mt-8 flex flex-col items-center">
-            <Loader2 className="h-10 w-10 animate-spin text-blue-600 mb-4" />
-            <p className="text-blue-700 font-medium">{t(`loadingStep${loadingStep}`)}</p>
-            <div className="w-64 bg-gray-200 h-2 rounded-full mt-4 overflow-hidden">
-               <div className="bg-blue-600 h-full transition-all" style={{ width: `${progress}%` }}></div>
+          <div className="mt-12 flex flex-col items-center">
+            <div className="relative h-16 w-16 mb-4">
+              <Loader2 className="h-16 w-16 animate-spin text-blue-600" />
+              <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-blue-700">{Math.round(progress)}%</div>
             </div>
+            <p className="text-gray-500 font-medium">A analisar dados financeiros... (Pode demorar 10-15s)</p>
           </div>
         )}
 
         {error && (
-          <div className="mt-8 p-4 bg-rose-50 text-rose-700 rounded-xl border border-rose-200 flex items-center justify-center">
-            <AlertCircle className="mr-2" /> {error}
+          <div className="mt-8 p-6 bg-rose-50 text-rose-700 rounded-2xl border border-rose-100 flex items-start text-left max-w-lg mx-auto shadow-sm">
+            <AlertCircle className="mr-3 h-6 w-6 shrink-0" /> 
+            <div>
+               <p className="font-bold mb-1">Erro na Analise</p>
+               <p className="text-sm">{error}</p>
+            </div>
           </div>
         )}
       </section>
 
       {report && (
-        <div className="mx-auto max-w-6xl px-6">
+        <div className="mx-auto max-w-6xl px-6 animate-in fade-in duration-700">
           <EarningsReport report={report} />
         </div>
       )}
@@ -207,7 +172,7 @@ function HomeContent() {
 
 export default function Home() {
   return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>}>
+    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-950 font-bold text-blue-600">A carregar interface...</div>}>
       <HomeContent />
     </Suspense>
   );
