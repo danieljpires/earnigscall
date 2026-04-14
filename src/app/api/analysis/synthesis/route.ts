@@ -10,7 +10,6 @@ const SynthesisSchema = z.object({
   year: z.number().int(),
   quarter: z.number().int(),
   language: z.enum(["en", "pt", "es"]),
-  overallSentiment: z.number().optional(),
 });
 
 export async function POST(request: Request) {
@@ -22,7 +21,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid parameters" }, { status: 400 });
     }
 
-    const { ticker, year, quarter, language, overallSentiment } = validation.data;
+    const { ticker, year, quarter, language } = validation.data;
 
     const cached = await getTranscriptCache(ticker, year, quarter);
     if (!cached || !cached.transcript) {
@@ -30,11 +29,13 @@ export async function POST(request: Request) {
     }
 
     const languageName = getLanguageName(language);
-    const synthesis = await generateSynthesis(ticker, cached.transcript, { 
-      overallSentiment: overallSentiment || 50,
-      qaBlocks: [],
-      textScore: 0
-    }, languageName);
+    
+    // ATENÇÃO: Corrigido para 3 argumentos para bater certo com lib/gemini.ts v9.5
+    const synthesis = await generateSynthesis(
+      ticker, 
+      cached.transcript, 
+      languageName
+    );
 
     return NextResponse.json({ synthesis });
   } catch (error: any) {
