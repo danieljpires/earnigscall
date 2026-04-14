@@ -115,8 +115,13 @@ async function generateSynthesis(
   languageName: string,
   previousCallInsight?: string
 ): Promise<any> {
+    if (!process.env.GEMINI_API_KEY) {
+      console.error("[Gemini:CRITICAL] GEMINI_API_KEY is missing from environment!");
+      throw new Error("Configuração incompleta: Chave do Gemini em falta no servidor.");
+    }
+
     const model = genAI.getGenerativeModel({
-    model: "gemini-flash-latest",
+    model: "gemini-1.5-flash-latest",
     generationConfig: { 
       responseMimeType: "application/json",
       maxOutputTokens: 4096
@@ -244,11 +249,11 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
     /\[\d+\][:\s]+/g 
   ];
 
-  const size = 100000;
-  const overlap = 15000;
+  const size = 40000;
+  const overlap = 8000;
   
-  if (qaSection.length < 120000) {
-    console.log(`[Gemini:Split] Transcript fits in single super-block (${qaSection.length} chars). 100% context preserved.`);
+  if (qaSection.length < 50000) {
+    console.log(`[Gemini:Split] Transcript fits in single block (${qaSection.length} chars). Optimized for Vercel Hobby.`);
     return [qaSection];
   }
 
