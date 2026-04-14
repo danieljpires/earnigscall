@@ -27,13 +27,27 @@ function HomeContent() {
     setProgress(20);
 
     try {
-      // PHASE 1: Combined Synthesis (Summary, Drivers, Outlook)
-      // This call now waits for Gemini to finish the main analysis!
+      // Smooth progress simulation
+      const interval = setInterval(() => {
+        setProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(interval);
+            return prev;
+          }
+           // Slow down as it reaches 90%
+          const increment = prev < 50 ? 5 : prev < 70 ? 2 : 0.5;
+          return prev + increment;
+        });
+      }, 500);
+
       const res = await fetch("/api/earnings-call", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker, language, manualTranscript, companyName }),
       });
+      
+      clearInterval(interval);
+      setProgress(95);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "Erro de Servidor" }));
