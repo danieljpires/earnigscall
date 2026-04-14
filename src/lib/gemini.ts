@@ -152,23 +152,12 @@ Output JSON:
   "driversToWatch": [{ "driver": "Name", "description": "Concise why" }],
   "sentimentNarrative": "Short tonality analysis.",
   "behavioralRead": "Short behavior notes.",
-  // "previousCallComparison": "Contrast (Max 2 sentences).",
-  // "comparisonMetrics": [
-  //   { "metric": "KPI", "currentValue": "X", "previousValue": "Y", "difference": "Z", "isPositive": true }
-  // ],
-  // "deltaAnalysis": {
-  //   "previousSnippet": "Short outlook snippet.",
-  //   "currentSnippet": "Current snippet.",
-  //   "keyChanges": [
-  //     { "phrase": "Change", "type": "added|removed|changed", "insight": "Why it matters." }
-  //   ]
-  // },
   "bullishCase": "Max 2 sentences.",
   "bearishCase": "Max 2 sentences.",
   "biggestRisk": "One sentence.",
   "biggestOpportunity": "One sentence.",
   "finalTakeaway": "Conclusion.",
-  "scores": { "sentiment": 0-100, "confidence": 0-100, "defensiveness": 0-100, "risk": 0-100, "outlook": 0-100 },
+  "scores": { "sentiment": 0, "confidence": 0, "defensiveness": 0, "risk": 0, "outlook": 0 },
   "keyThemes": ["Theme 1", "Theme 2"]
 }
 `;
