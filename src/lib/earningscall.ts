@@ -81,15 +81,18 @@ export async function getLatestAndPreviousEarningsCall(
 
     if (!latest) {
       console.warn(`[EarningsCall] No valid transcripts found for ${symbol} in any quarter.`);
-      throw new Error("TICKER_NOT_IN_FREE_PLAN");
+      throw new Error(`TRANSCRIPT_NOT_FOUND: Sem transcrições disponíveis para ${symbol}.`);
     }
 
     return { latest, previous };
-  } catch (error) {
-    if (error instanceof Error && error.message === "TICKER_NOT_IN_FREE_PLAN") {
-      throw error;
-    }
+  } catch (error: any) {
     console.error(`[EarningsCall] SDK Error for ${ticker}:`, error);
-    throw new Error("TICKER_NOT_IN_FREE_PLAN");
+    const msg = error?.message || String(error);
+    
+    if (msg.includes("TICKER_NOT_IN_FREE_PLAN") || msg.includes("plan")) {
+      throw new Error("TICKER_NOT_IN_FREE_PLAN");
+    }
+    
+    throw new Error(`FETCH_ERROR: ${msg}`);
   }
 }
