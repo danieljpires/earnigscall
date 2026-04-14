@@ -31,8 +31,8 @@ export async function POST(request: Request) {
       latestTranscript = cleanTranscript(manualTranscript);
     } else {
       // Check cache first
-      const cached = await getTranscriptCache(ticker, 2026, 1);
-      if (cached) {
+      const cached: any = await getTranscriptCache(ticker, 2026, 1);
+      if (cached && cached.transcript) {
         latestTranscript = cached.transcript;
       } else {
         const sdkData = await getLatestAndPreviousEarningsCall(ticker);
