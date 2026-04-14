@@ -234,15 +234,80 @@ export function cleanTranscript(text: string): string {
 }
 
 /**
- * Returns the chunks for parallel/incremental Q&A processing
+ * Returns the chunks for parallel/incremental Q&A processing.
+ * IMPROVED: Uses "Smart Split" based on markers to avoid cutting questions mid-flow.
  */
 export function getQAChunks(qaSection: string, isManual: boolean = false): string[] {
-  // DRASTIC REDUCTION: 12,000 chars to ensure fast extraction and lower timeout probability.
-  const size = 12000;
-  const overlap = 8000; // Large overlap ensures no Q&A is split across chunks
+  if (isManual) {
+     const size = 15000;
+     const overlap = 5000;
+     return chunkTextWithOverlap(qaSection, size, overlap);
+  }
 
+  // 1. Identify all potential analyst transition markers
+  const markers = [
+    /Our next question comes from/gi,
+    /Our next question is from/gi,
+    /Next question comes from/gi,
+    /The next question comes from/gi,
+    /Your next question comes from/gi,
+    /\nOperator:/gi,
+    /\n[A-Z][a-zA-Z\s\.\,\-]+(?:(?:\s*[\-\—\–]\s*|\s*\()[A-Z][a-zA-Z\s\.\,]+(?:\))?)?[.:\-\—\–]/g // Regex from transcript-parser
+  ];
 
-  return chunkTextWithOverlap(qaSection, size, overlap);
+  const splitPoints: number[] = [0];
+  
+  // Find all matches for all markers
+  for (const marker of markers) {
+    let match;
+    const regex = new RegExp(marker, marker.global ? marker.flags : marker.flags + 'g');
+    while ((match = regex.exec(qaSection)) !== null) {
+      splitPoints.push(match.index);
+    }
+  }
+
+  // Sort and unique split points
+  const sortedPoints = Array.from(new Set(splitPoints)).sort((a, b) => a - b);
+  
+  const chunks: string[] = [];
+  const TARGET_SIZE = 35000; // Large chunk for Gemini Flash context
+  const MIN_SIZE = 15000;    // Don't split if too small
+  
+  let currentStart = 0;
+  
+  for (let i = 0; i < sortedPoints.length; i++) {
+    const point = sortedPoints[i];
+    
+    // If we've reached a segment that is large enough, or it's the last point
+    if (point - currentStart > TARGET_SIZE) {
+      // Find the last split point before TARGET_SIZE
+      let bestSplit = point;
+      // Walk back to find a point closer to TARGET_SIZE but > MIN_SIZE
+      for (let j = i; j >= 0; j--) {
+        if (sortedPoints[j] - currentStart > MIN_SIZE && sortedPoints[j] - currentStart <= TARGET_SIZE + 5000) {
+           bestSplit = sortedPoints[j];
+           break;
+        }
+      }
+      
+      chunks.push(qaSection.substring(currentStart, bestSplit));
+      currentStart = bestSplit;
+    }
+  }
+  
+  // Add the final piece
+  if (currentStart < qaSection.length) {
+    chunks.push(qaSection.substring(currentStart));
+  }
+
+  // If no markers were found or splitting failed, fallback to character-based
+  if (chunks.length === 0 || (chunks.length === 1 && chunks[0].length > TARGET_SIZE * 1.5)) {
+     console.warn("[Gemini:Split] No markers found. Falling back to char-based overlap.");
+     return chunkTextWithOverlap(qaSection, 25000, 5000);
+  }
+
+  console.log(`[Gemini:Split] Generated ${chunks.length} smart chunks.`);
+  return chunks;
 }
 
 /**
@@ -284,6 +349,9 @@ PATTERN RECOGNITION:
 - Questions often start with: "The first question is...", "The next question comes from...", "Analyst:", "Speaker:".
 - Each analyst might ask 2-3 sub-questions or follow-ups; extract them all as clear, logical pairs.
 - If a response is split, ensure the full meaning is captured.
+- EXTREME ATTENTION to Follow-Up questions: Analysts often ask a second question after the first answer. Capture it!
+
+IMPORTANT: If an analyst in your ${analystContext ? 'list' : 'segment'} asks a question, it MUST be in the output.
 
 Output must be a valid JSON array of objects with fields: id (uuid), questionBy, answeredBy, question, answer, importanceDescription (1-sentence summary), sentimentScore (0-1), behavioralLabel.
 Segment:
@@ -323,14 +391,19 @@ export async function generateGeminiReport(
     
     const seen = new Set();
     const uniqueQA = results.flat().filter(qa => {
-      if (!qa.question || qa.question.length < 5) return false;
+      if (!qa.question || qa.question.length < 10) return false; // Ignore noise
       
-      // Robust Dedup: use more of the question (300 chars) + analyst to avoid dropping similar questions
-      const analystKey = (qa.questionBy || "unknown").toLowerCase().substring(0, 50).trim();
-      const questionKey = qa.question.substring(0, 300).toLowerCase().trim();
-      // Also consider the answer start to differentiate follows-ups that start with same thanks
-      const answerKey = (qa.answer || "").substring(0, 100).toLowerCase().trim();
-      const compositeKey = `${analystKey}-${questionKey}-${answerKey}`;
+      // Robust Dedup: use question signature (First 200 + Last 200) + Analyst
+      // This allows analysts to ask multiple questions while catching redundant extractions
+      const analystKey = (qa.questionBy || "unknown").toLowerCase().substring(0, 30).trim();
+      const qText = qa.question.toLowerCase().trim();
+      const questionKey = qText.length > 400 
+        ? qText.substring(0, 200) + "---" + qText.substring(qText.length - 200)
+        : qText;
+
+      // Also consider the answer start to differentiate follow-ups
+      const answerKey = (qa.answer || "").substring(0, 150).toLowerCase().trim();
+      const compositeKey = `${analystKey}|${questionKey}|${answerKey}`;
       
       if (seen.has(compositeKey)) return false;
       seen.add(compositeKey);
