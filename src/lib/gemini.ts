@@ -244,14 +244,28 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
      return chunkTextWithOverlap(qaSection, size, overlap);
   }
 
-  // 1. Identify all potential analyst transition markers
+  // 1. Identify all potential analyst transition markers (Exhaustive Global List)
   const markers = [
+    /Our first question comes from/gi,
     /Our next question comes from/gi,
+    /Our first question is from/gi,
     /Our next question is from/gi,
     /Next question comes from/gi,
     /The next question comes from/gi,
     /Your next question comes from/gi,
+    /Your first question comes from/gi,
+    /Next question is from/gi,
+    /comes from the line of/gi,
+    /is from the line of/gi,
+    /proceed with your question/gi,
+    /please go ahead/gi,
+    /The floor is now open for questions/gi,
+    /Opening the floor for questions/gi,
+    /We will now begin the Q&A/gi,
+    /open the call to questions/gi,
+    /open the call for questions/gi,
     /\nOperator:/gi,
+    /\n[A-Z][a-zA-Z\s\.\,]+ [A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, // Standard Name Prefix
     /\n[A-Z][a-zA-Z\s\.\,\-]+(?:(?:\s*[\-\—\–]\s*|\s*\()[A-Z][a-zA-Z\s\.\,]+(?:\))?)?[.:\-\—\–]/g // Regex from transcript-parser
   ];
 

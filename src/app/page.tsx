@@ -168,13 +168,18 @@ function HomeContent() {
                       // Local deduplication for overlapping chunks (matching backend logic)
                       const seen = new Set();
                       const unique = combined.filter((item: any) => {
-                        if (!item.question || item.question.length < 5) return false;
+                        if (!item.question || item.question.length < 10) return false;
                         
-                        // Match backend robust deduplication (300 chars question + 100 chars answer)
-                        const analystKey = (item.questionBy || "unknown").toLowerCase().substring(0, 50).trim();
-                        const questionKey = item.question.substring(0, 300).toLowerCase().trim();
-                        const answerKey = (item.answer || "").substring(0, 100).toLowerCase().trim();
-                        const compositeKey = `${analystKey}-${questionKey}-${answerKey}`;
+                        // SYNC: Matches backend robust deduplication (Signature: First 200 + Last 200)
+                        const analystKey = (item.questionBy || "unknown").toLowerCase().substring(0, 30).trim();
+                        const qText = item.question.toLowerCase().trim();
+                        const questionKey = qText.length > 400 
+                          ? qText.substring(0, 200) + "---" + qText.substring(qText.length - 200)
+                          : qText;
+
+                        // Also consider the answer start to differentiate follow-ups
+                        const answerKey = (item.answer || "").substring(0, 150).toLowerCase().trim();
+                        const compositeKey = `${analystKey}|${questionKey}|${answerKey}`;
                         
                         if (seen.has(compositeKey)) return false;
                         seen.add(compositeKey);
