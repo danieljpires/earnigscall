@@ -244,7 +244,7 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
      return chunkTextWithOverlap(qaSection, size, overlap);
   }
 
-  // 1. Identify all potential analyst transition markers (Universal Strategy)
+  // 1. Identify all potential analyst transition markers (Total Security List)
   const markers = [
     /\nOperator:/gi,
     /Our first question/gi,
@@ -261,16 +261,23 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
     /We will now begin the Q&A/gi,
     /open the call to questions/gi,
     /The line is now open/gi,
+    /at this time we will/gi,
+    /next in line is/gi,
+    /our first analyst/gi,
+    /please stand by for/gi,
+    /to allow for questions/gi,
+    /Your line is now open/gi,
     /\n[A-Z][a-zA-Z\s\.\,]+ [A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, // Standard Name Prefix
-    /\n[A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g // Generic Speaker Start
+    /\n[A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, // Generic Speaker Start
+    /\[\d+\][:\s]+/g // Metadata tags often at start of speaker
   ];
 
-  const size = isManual ? 45000 : 60000;
-  const overlap = 10000;
+  const size = isManual ? 80000 : 100000;
+  const overlap = 15000;
   
-  // If the total text is less than 80k, just return one chunk to ensure 100% context
-  if (qaSection.length < 80000) {
-    console.log(`[Gemini:Split] Small transcript (${qaSection.length} chars). Using single chunk for maximum context.`);
+  // If the total text is less than 120k, just return one chunk to ensure 100% context
+  if (qaSection.length < 120000) {
+    console.log(`[Gemini:Split] Transcript fits in single super-block (${qaSection.length} chars). 100% context preserved.`);
     return [qaSection];
   }
 

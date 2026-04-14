@@ -50,10 +50,10 @@ if (!IS_KV_ENABLED && process.env.NODE_ENV !== "production") {
 
 /**
  * Generates a unique cache key for a specific analysis
- * UPDATED: Added v5 for the Universal Strategy (Operator-anchored).
+ * UPDATED: Added v6 for the Super-Block strategy (100k context).
  */
 function getCacheKey(ticker: string, year: number, quarter: number, lang: string): string {
-  return `analysis:v5:${ticker.toUpperCase()}:${year}:${quarter}:${lang.toLowerCase()}`;
+  return `analysis:v6:${ticker.toUpperCase()}:${year}:${quarter}:${lang.toLowerCase()}`;
 }
 
 function getLocalCachePath(key: string): string {
