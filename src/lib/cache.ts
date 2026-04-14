@@ -50,10 +50,10 @@ if (!IS_KV_ENABLED && process.env.NODE_ENV !== "production") {
 
 /**
  * Generates a unique cache key for a specific analysis
- * UPDATED: Added v2 to invalidate old (malformed or low-integrity) caches.
+ * UPDATED: Added v3 to force re-analysis with Analyst Rigor (Capture all follow-ups).
  */
 function getCacheKey(ticker: string, year: number, quarter: number, lang: string): string {
-  return `analysis:v2:${ticker.toUpperCase()}:${year}:${quarter}:${lang.toLowerCase()}`;
+  return `analysis:v3:${ticker.toUpperCase()}:${year}:${quarter}:${lang.toLowerCase()}`;
 }
 
 function getLocalCachePath(key: string): string {

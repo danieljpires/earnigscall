@@ -170,16 +170,16 @@ function HomeContent() {
                       const unique = combined.filter((item: any) => {
                         if (!item.question || item.question.length < 10) return false;
                         
-                        // SYNC: Matches backend robust deduplication (Signature: First 200 + Last 200)
+                        // SYNC: Global Robust Signature (Analyst + Partial Question + Partial Answer)
                         const analystKey = (item.questionBy || "unknown").toLowerCase().substring(0, 30).trim();
                         const qText = item.question.toLowerCase().trim();
-                        const questionKey = qText.length > 400 
-                          ? qText.substring(0, 200) + "---" + qText.substring(qText.length - 200)
+                        // Mix of start/end to distinguish similar follow-ups globally
+                        const questionKey = qText.length > 500 
+                          ? qText.substring(0, 200) + "..." + qText.substring(qText.length - 200)
                           : qText;
 
-                        // Also consider the answer start to differentiate follow-ups
-                        const answerKey = (item.answer || "").substring(0, 150).toLowerCase().trim();
-                        const compositeKey = `${analystKey}|${questionKey}|${answerKey}`;
+                        const answerKey = (item.answer || "").substring(0, 100).toLowerCase().trim();
+                        const compositeKey = `${analystKey}|${questionKey}|${answerKey.substring(0, 30)}`;
                         
                         if (seen.has(compositeKey)) return false;
                         seen.add(compositeKey);

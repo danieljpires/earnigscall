@@ -359,13 +359,13 @@ MANDATORY: Use the exact dialect and vocabulary of ${languageName}.
 MANDATORY: If a chunk ends mid-question or mid-answer, extract what is available.
 
 
-PATTERN RECOGNITION: 
-- Questions often start with: "The first question is...", "The next question comes from...", "Analyst:", "Speaker:".
-- Each analyst might ask 2-3 sub-questions or follow-ups; extract them all as clear, logical pairs.
-- If a response is split, ensure the full meaning is captured.
-- EXTREME ATTENTION to Follow-Up questions: Analysts often ask a second question after the first answer. Capture it!
-
-IMPORTANT: If an analyst in your ${analystContext ? 'list' : 'segment'} asks a question, it MUST be in the output.
+PATTERN RECOGNITION (Global Turn-Based): 
+- Each analyst-executive exchange is a single interaction.
+- MANDATORY: If an analyst asks a Follow-Up question AFTER the executive's first response, YOU MUST EXTRACT IT AS A NEW, SEPARATE OBJECT in the JSON array.
+- DO NOT MERGE multiple questions from the same analyst if they are separated by an intervening response.
+- Each time the analyst takes the floor again to follow up, create a new JSON object.
+- Capture the full, original meaning. Do not summarize or omit any analyst.
+- Output: Standard JSON array of objects.
 
 Output must be a valid JSON array of objects with fields: id (uuid), questionBy, answeredBy, question, answer, importanceDescription (1-sentence summary), sentimentScore (0-1), behavioralLabel.
 Segment:
