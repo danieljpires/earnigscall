@@ -138,7 +138,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ report });
   } catch (error: any) {
     console.error("Analysis pipeline error:", error);
-    const msg = error.message || "";
+    const msg = error.message || String(error);
     
     if (msg.includes("TICKER_NOT_IN_FREE_PLAN")) {
       return NextResponse.json({ error: "Ticker não disponível no plano atual (EarningsCall). Tente Entrada Manual." }, { status: 403 });
@@ -146,6 +146,7 @@ export async function POST(request: Request) {
     if (msg.includes("FETCH_ERROR") || msg.includes("TRANSCRIPT_NOT_FOUND")) {
       return NextResponse.json({ error: `Erro na Busca: ${msg.replace("FETCH_ERROR: ", "")}` }, { status: 404 });
     }
-    return NextResponse.json({ error: "Erro interno no servidor de análise." }, { status: 500 });
+    // EXPOSE THE TRUE ERROR
+    return NextResponse.json({ error: `Erro na Análise: ${msg}` }, { status: 500 });
   }
 }
