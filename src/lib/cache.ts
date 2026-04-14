@@ -37,9 +37,15 @@ function setToMemory(key: string, data: any) {
   }
 }
 
-// Ensure local cache directory exists (for dev)
-if (!fs.existsSync(CACHE_DIR) && !IS_KV_ENABLED) {
-  fs.mkdirSync(CACHE_DIR, { recursive: true });
+// Ensure local cache directory exists (for dev only)
+if (!IS_KV_ENABLED && process.env.NODE_ENV !== "production") {
+  try {
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+  } catch (e) {
+    console.warn("[Cache] Could not create local cache directory, skipping file caching.");
+  }
 }
 
 /**
@@ -113,7 +119,7 @@ export async function setAnalysisCache(ticker: string, year: number, quarter: nu
     } catch (e) {
       console.error(`[Cache:KV] Error saving key: ${key}`, e);
     }
-  } else {
+  } else if (process.env.NODE_ENV !== "production") {
     const cachePath = getLocalCachePath(key);
     try {
       if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -163,7 +169,7 @@ export async function setTranscriptCache(ticker: string, year: number, quarter: 
 
   if (IS_KV_ENABLED) {
     await kv.set(key, data, { ex: 60 * 60 * 24 * 30 });
-  } else {
+  } else if (process.env.NODE_ENV !== "production") {
     const cachePath = getLocalCachePath(key);
     if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
     fs.writeFileSync(cachePath, JSON.stringify(data, null, 2), "utf8");
