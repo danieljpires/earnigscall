@@ -1,202 +1,101 @@
 import fs from "fs";
 import path from "path";
-import os from "os";
-import { kv } from "@vercel/kv";
+import { FullReportData } from "@/types";
+import { createClient } from "@vercel/kv";
 
-const CACHE_DIR = path.join(os.tmpdir(), "earnings-call-analyzer-cache");
+const CACHE_DIR = path.join(process.cwd(), "cache");
 const IS_KV_ENABLED = !!process.env.KV_REST_API_URL;
 
-// Short-term in-memory cache to handle concurrent requests and reduce I/O
-// RELOAD TRIGGERED: 2026-03-30
-const MEMORY_CACHE = new Map<string, { data: any; expiry: number }>();
-const MEMORY_CACHE_TTL = 1000 * 60 * 5; // 5 minutes
+// Use @vercel/kv if available
+const kv = createClient({
+  url: process.env.KV_REST_API_URL || "",
+  token: process.env.KV_REST_API_TOKEN || "",
+});
 
-/**
- * Internal helper to check/set memory cache
- */
-function getFromMemory(key: string): any | null {
-  const item = MEMORY_CACHE.get(key);
-  if (item && item.expiry > Date.now()) {
-    return item.data;
-  }
-  if (item) MEMORY_CACHE.delete(key);
-  return null;
+// Polyfill dynamic memory cache
+const memoryCache = new Map<string, { data: any, expires: number }>();
+
+function setMemory(key: string, data: any, ttl: number = 600000) {
+  memoryCache.set(key, { data, expires: Date.now() + ttl });
 }
 
-function setToMemory(key: string, data: any) {
-  MEMORY_CACHE.set(key, {
-    data,
-    expiry: Date.now() + MEMORY_CACHE_TTL
-  });
-  
-  // Cleanup occasionally (if map gets too large)
-  if (MEMORY_CACHE.size > 200) {
-    const now = Date.now();
-    for (const [k, v] of MEMORY_CACHE.entries()) {
-      if (v.expiry < now) MEMORY_CACHE.delete(k);
-    }
+function getMemory(key: string): any | null {
+  const item = memoryCache.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expires) {
+    memoryCache.delete(key);
+    return null;
   }
+  return item.data;
 }
 
-// Ensure local cache directory exists (for dev only)
-if (!IS_KV_ENABLED && process.env.NODE_ENV !== "production") {
-  try {
-    if (!fs.existsSync(CACHE_DIR)) {
-      fs.mkdirSync(CACHE_DIR, { recursive: true });
-    }
-  } catch (e) {
-    console.warn("[Cache] Could not create local cache directory, skipping file caching.");
-  }
-}
-
-/**
- * Generates a unique cache key for a specific analysis
- * UPDATED: Added v6 for the Super-Block strategy (100k context).
- */
 function getCacheKey(ticker: string, year: number, quarter: number, lang: string): string {
+  // Versão v9 (Final Stability)
   return `analysis:v9:${ticker.toUpperCase()}:${year}:${quarter}:${lang.toLowerCase()}`;
 }
 
 function getLocalCachePath(key: string): string {
-  const filename = `${key.replace(/:/g, "_")}.json`;
-  return path.join(CACHE_DIR, filename);
+  return path.join(CACHE_DIR, `${key.replace(/:/g, "_")}.json`);
 }
 
 /**
- * Retrieves cached analysis if it exists
+ * DISABLED CACHE FOR TESTING - Returns null to force fresh AI generation
  */
-export async function getAnalysisCache(ticker: string, year: number, quarter: number, lang: string) {
-  const key = getCacheKey(ticker, year, quarter, lang);
-  
-  // 1. Check Memory Cache first
-  const memData = getFromMemory(key);
-  if (memData) {
-    console.log(`[Cache:Memory] Hit for ${key}`);
-    return memData;
-  }
-
-  // 2. Check Persisted Cache (KV or Disk)
-  if (IS_KV_ENABLED) {
-    try {
-      const data = await kv.get(key);
-      if (data) {
-        console.log(`[Cache:KV] Hit for ${key}`);
-        setToMemory(key, data);
-        return data;
-      }
-    } catch (e) {
-      console.error(`[Cache:KV] Error reading key: ${key}`, e);
-    }
-  } else {
-    const cachePath = getLocalCachePath(key);
-    if (fs.existsSync(cachePath)) {
-      try {
-        const data = fs.readFileSync(cachePath, "utf8");
-        const parsed = JSON.parse(data);
-        console.log(`[Cache:File] Hit for ${key}`);
-        setToMemory(key, parsed);
-        return parsed;
-      } catch (e) {
-        console.error(`[Cache:File] Error reading file: ${cachePath}`, e);
-      }
-    }
-  }
-  
+export async function getAnalysisCache(ticker: string, year: number, quarter: number, lang: string): Promise<FullReportData | null> {
+  console.log("[Cache] Analysis cache is currently DISABLED to force fresh results.");
   return null;
 }
 
-/**
- * Saves analysis result to cache
- */
 export async function setAnalysisCache(ticker: string, year: number, quarter: number, lang: string, data: any) {
   const key = getCacheKey(ticker, year, quarter, lang);
+  setMemory(key, data);
   
-  // Save to memory
-  setToMemory(key, data);
-
   if (IS_KV_ENABLED) {
-    try {
-      await kv.set(key, data, { ex: 60 * 60 * 24 * 30 }); // Cache for 30 days
-      console.log(`[Cache:KV] Saved ${key}`);
-    } catch (e) {
-      console.error(`[Cache:KV] Error saving key: ${key}`, e);
-    }
-  } else if (process.env.NODE_ENV !== "production") {
-    const cachePath = getLocalCachePath(key);
-    try {
-      if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-      fs.writeFileSync(cachePath, JSON.stringify(data, null, 2), "utf8");
-      console.log(`[Cache:File] Saved ${key}`);
-    } catch (e) {
-      console.error(`[Cache:File] Error writing file: ${cachePath}`, e);
-    }
+    try { await kv.set(key, data, { ex: 3600 }); } catch (e) {}
   }
 }
 
-/**
- * Optimized Raw Transcript Cache (Shared across languages)
- */
 export async function getTranscriptCache(ticker: string, year: number, quarter: number) {
-  const key = `transcript:v2:${ticker.toUpperCase()}:${year}:${quarter}`;
-  
-  // 1. Check Memory Cache
-  const memData = getFromMemory(key);
-  if (memData) {
-    return memData;
-  }
+  const key = `transcript:v3:${ticker.toUpperCase()}:${year}:${quarter}`;
+  const mem = getMemory(key);
+  if (mem) return { transcript: mem };
 
-  // 2. Check Persisted Cache
-  let data = null;
   if (IS_KV_ENABLED) {
-    data = await kv.get(key);
-  } else {
-    const cachePath = getLocalCachePath(key);
-    if (fs.existsSync(cachePath)) {
-      data = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-    }
+    try {
+      const val = await kv.get<string>(key);
+      if (val) {
+        setMemory(key, val);
+        return { transcript: val };
+      }
+    } catch (e) {}
   }
-
-  if (data) {
-    setToMemory(key, data);
-  }
-  return data;
+  return null;
 }
 
 export async function setTranscriptCache(ticker: string, year: number, quarter: number, transcript: string) {
-  const key = `transcript:v2:${ticker.toUpperCase()}:${year}:${quarter}`;
-  const data = { transcript };
-
-  // Save to memory
-  setToMemory(key, data);
-
+  const key = `transcript:v3:${ticker.toUpperCase()}:${year}:${quarter}`;
+  setMemory(key, transcript);
   if (IS_KV_ENABLED) {
-    await kv.set(key, data, { ex: 60 * 60 * 24 * 30 });
-  } else if (process.env.NODE_ENV !== "production") {
-    const cachePath = getLocalCachePath(key);
-    if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-    fs.writeFileSync(cachePath, JSON.stringify(data, null, 2), "utf8");
+    try { await kv.set(key, transcript, { ex: 3600 * 24 }); } catch (e) {}
   }
 }
 
-/**
- * Basic IP-based rate limiting using Vercel KV
- */
-export async function checkRateLimit(ip: string, limit: number = 20, windowSeconds: number = 3600): Promise<{ success: boolean; current: number }> {
-  if (!IS_KV_ENABLED) return { success: true, current: 0 };
-  
+interface RateLimitResult { success: boolean; current: number; limit: number; reset: number; }
+
+export async function checkRateLimit(ip: string): Promise<RateLimitResult> {
+  const limit = 50;
+  const window = 3600;
   const key = `ratelimit:${ip}`;
-  try {
-    const current = await kv.incr(key);
-    if (current === 1) {
-      await kv.expire(key, windowSeconds);
-    }
-    
-    return {
-      success: current <= limit,
-      current
-    };
-  } catch (e) {
-    console.error(`[RateLimit] Error checking IP ${ip}`, e);
-    return { success: true, current: 0 }; // Fail open
+  const now = Date.now();
+  
+  if (IS_KV_ENABLED) {
+    try {
+       const res: any = await kv.get(key);
+       const current = res ? res.count + 1 : 1;
+       if (current > limit) return { success: false, current, limit, reset: 0 };
+       await kv.set(key, { count: current, timestamp: now }, { ex: window });
+       return { success: true, current, limit, reset: 0 };
+    } catch (e) {}
   }
+  return { success: true, current: 1, limit: 100, reset: 0 };
 }
