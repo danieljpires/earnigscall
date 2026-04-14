@@ -121,7 +121,7 @@ async function generateSynthesis(
     }
 
     const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-flash-latest",
     generationConfig: { 
       responseMimeType: "application/json",
       maxOutputTokens: 4096
@@ -249,11 +249,11 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
     /\[\d+\][:\s]+/g 
   ];
 
-  const size = 40000;
-  const overlap = 8000;
+  const size = 30000;
+  const overlap = 5000;
   
-  if (qaSection.length < 50000) {
-    console.log(`[Gemini:Split] Transcript fits in single block (${qaSection.length} chars). Optimized for Vercel Hobby.`);
+  if (qaSection.length < 35000) {
+    console.log(`[Gemini:Split] Transcript fits in single block (${qaSection.length} chars). Optimized for Gemini Pro + Vercel Hobby.`);
     return [qaSection];
   }
 
