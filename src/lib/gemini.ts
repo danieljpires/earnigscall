@@ -244,17 +244,14 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
      return chunkTextWithOverlap(qaSection, size, overlap);
   }
 
-  // 1. Identify all potential analyst transition markers (Exhaustive Global List)
+  // 1. Identify all potential analyst transition markers (Universal Strategy)
   const markers = [
-    /Our first question comes from/gi,
-    /Our next question comes from/gi,
-    /Our first question is from/gi,
-    /Our next question is from/gi,
-    /Next question comes from/gi,
-    /The next question comes from/gi,
-    /Your next question comes from/gi,
-    /Your first question comes from/gi,
-    /Next question is from/gi,
+    /\nOperator:/gi,
+    /Our first question/gi,
+    /Our next question/gi,
+    /The next question/gi,
+    /Your next question/gi,
+    /Your first question/gi,
     /comes from the line of/gi,
     /is from the line of/gi,
     /proceed with your question/gi,
@@ -263,62 +260,67 @@ export function getQAChunks(qaSection: string, isManual: boolean = false): strin
     /Opening the floor for questions/gi,
     /We will now begin the Q&A/gi,
     /open the call to questions/gi,
-    /open the call for questions/gi,
-    /\nOperator:/gi,
+    /The line is now open/gi,
     /\n[A-Z][a-zA-Z\s\.\,]+ [A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g, // Standard Name Prefix
-    /\n[A-Z][a-zA-Z\s\.\,\-]+(?:(?:\s*[\-\—\–]\s*|\s*\()[A-Z][a-zA-Z\s\.\,]+(?:\))?)?[.:\-\—\–]/g // Regex from transcript-parser
+    /\n[A-Z][a-zA-Z\s\.\,]+[.:\-\—\–]/g // Generic Speaker Start
   ];
 
-  const splitPoints: number[] = [0];
+  const size = isManual ? 45000 : 60000;
+  const overlap = 10000;
   
-  // Find all matches for all markers
-  for (const marker of markers) {
-    let match;
-    const regex = new RegExp(marker, marker.global ? marker.flags : marker.flags + 'g');
-    while ((match = regex.exec(qaSection)) !== null) {
-      splitPoints.push(match.index);
-    }
+  // If the total text is less than 80k, just return one chunk to ensure 100% context
+  if (qaSection.length < 80000) {
+    console.log(`[Gemini:Split] Small transcript (${qaSection.length} chars). Using single chunk for maximum context.`);
+    return [qaSection];
   }
 
-  // Sort and unique split points
-  const sortedPoints = Array.from(new Set(splitPoints)).sort((a, b) => a - b);
-  
   const chunks: string[] = [];
-  const TARGET_SIZE = 35000; // Large chunk for Gemini Flash context
-  const MIN_SIZE = 15000;    // Don't split if too small
+  const TARGET_SIZE = size;
   
-  let currentStart = 0;
-  
-  for (let i = 0; i < sortedPoints.length; i++) {
-    const point = sortedPoints[i];
-    
-    // If we've reached a segment that is large enough, or it's the last point
-    if (point - currentStart > TARGET_SIZE) {
-      // Find the last split point before TARGET_SIZE
-      let bestSplit = point;
-      // Walk back to find a point closer to TARGET_SIZE but > MIN_SIZE
-      for (let j = i; j >= 0; j--) {
-        if (sortedPoints[j] - currentStart > MIN_SIZE && sortedPoints[j] - currentStart <= TARGET_SIZE + 5000) {
-           bestSplit = sortedPoints[j];
-           break;
-        }
-      }
-      
-      chunks.push(qaSection.substring(currentStart, bestSplit));
-      currentStart = bestSplit;
-    }
-  }
-  
-  // Add the final piece
-  if (currentStart < qaSection.length) {
-    chunks.push(qaSection.substring(currentStart));
-  }
+  // Basic character-based split with marker-awareness for very large transcripts
+  return chunkTextWithOverlap(qaSection, TARGET_SIZE, overlap);
+}
 
-  // If no markers were found or splitting failed, fallback to character-based
-  if (chunks.length === 0 || (chunks.length === 1 && chunks[0].length > TARGET_SIZE * 1.5)) {
-     console.warn("[Gemini:Split] No markers found. Falling back to char-based overlap.");
-     return chunkTextWithOverlap(qaSection, 25000, 5000);
-  }
+/**
+ * Step 2: Q&A Extraction from chunk. Global Turn-Based Strategy.
+ */
+export async function extractQAFromChunk(
+  ticker: string,
+  chunk: string,
+  languageName: string,
+  chunkIndex: number,
+  totalChunks: number,
+  knownAnalysts?: string[]
+): Promise<any[]> {
+  const model = genAI.getGenerativeModel({
+    model: "gemini-flash-latest",
+    generationConfig: { 
+      responseMimeType: "application/json",
+      maxOutputTokens: 8192 
+    }
+  });
+
+  console.log(`[Gemini:Turbo] Processing Chunk ${chunkIndex+1}/${totalChunks} (${chunk.length} chars)...`);
+  
+  const prompt = `
+Extract EVERY analyst interaction from this ${ticker} segment. 
+MANDATORY: NO SUMMARIES. Extract 100% of questions and 100% of answers.
+Translate results correctly to ${languageName} (Portuguese from Portugal).
+
+CRITICAL EXTRACTION LOGIC:
+1. An interaction begins when an analyst/participant asks a question.
+2. It ends when the executive completes their response.
+3. If the SAME analyst asks a second question (follow-up) after the response, YOU MUST EXTRACT IT AS A NEW, SEPARATE OBJECT in the JSON array.
+4. Each analytical "turn" (Question -> Answer) must be a distinct JSON object.
+
+Output must be a valid JSON array of objects with fields: 
+id (uuid), questionBy (Analyst Name), answeredBy (Executive Name), question (Full Question), answer (Full Answer), importanceDescription (1-sentence summary), sentimentScore (0-1), behavioralLabel.
+
+Segment to process:
+---
+${chunk}
+---
+`;
 
   console.log(`[Gemini:Split] Generated ${chunks.length} smart chunks.`);
   return chunks;
@@ -339,37 +341,29 @@ export async function extractQAFromChunk(
     model: "gemini-flash-latest",
     generationConfig: { 
       responseMimeType: "application/json",
-      maxOutputTokens: 8192 // Full support for multiple pairs
+      maxOutputTokens: 8192 
     }
   });
 
-  console.log(`[Gemini:Turbo] Chunk ${chunkIndex+1}/${totalChunks} (${chunk.length} chars)...`);
+  console.log(`[Gemini:Turbo] Processing Chunk ${chunkIndex+1}/${totalChunks} (${chunk.length} chars)...`);
   
-  const analystContext = knownAnalysts && knownAnalysts.length > 0 
-    ? `KNOWN ANALYSTS IN THIS TRANSCRIPT: ${knownAnalysts.join(", ")}. Ensure their questions are extracted.`
-    : "";
-
   const prompt = `
-Extract ALL Q&A pairs from this ${ticker} segment. 
-MANDATORY: EXHAUSTIVE EXTRACTION. DO NOT summarize, DO NOT Skip any analyst, DO NOT omit follow-up questions.
-Each analyst question and its full response must be captured.
-${analystContext}
-Translate ALL content to ${languageName}.
-MANDATORY: Use the exact dialect and vocabulary of ${languageName}.
-MANDATORY: If a chunk ends mid-question or mid-answer, extract what is available.
+Extract EVERY analyst interaction from this ${ticker} segment. 
+MANDATORY: NO SUMMARIES. Extract 100% of questions and 100% of answers.
+Translate results correctly to ${languageName}.
 
+CRITICAL EXTRACTION LOGIC:
+1. An interaction begins when an analyst/participant asks a question.
+2. It ends when the executive completes their response.
+3. If the SAME analyst asks a follow-up question after the response, YOU MUST EXTRACT IT AS A NEW, SEPARATE OBJECT.
+4. Each analytical "turn" (Question -> Answer) must be a distinct JSON object.
 
-PATTERN RECOGNITION (Global Turn-Based): 
-- Each analyst-executive exchange is a single interaction.
-- MANDATORY: If an analyst asks a Follow-Up question AFTER the executive's first response, YOU MUST EXTRACT IT AS A NEW, SEPARATE OBJECT in the JSON array.
-- DO NOT MERGE multiple questions from the same analyst if they are separated by an intervening response.
-- Each time the analyst takes the floor again to follow up, create a new JSON object.
-- Capture the full, original meaning. Do not summarize or omit any analyst.
-- Output: Standard JSON array of objects.
+Output JSON array (id, questionBy, answeredBy, question, answer, importanceDescription, sentimentScore, behavioralLabel).
 
-Output must be a valid JSON array of objects with fields: id (uuid), questionBy, answeredBy, question, answer, importanceDescription (1-sentence summary), sentimentScore (0-1), behavioralLabel.
-Segment:
+Segment to process:
+---
 ${chunk}
+---
 `;
 
   try {
@@ -381,7 +375,6 @@ ${chunk}
     console.error(`[Gemini] Error in Q&A chunk ${chunkIndex+1}:`, e);
     return [];
   }
-
 }
 
 export async function generateGeminiReport(
