@@ -136,7 +136,7 @@ export async function setAnalysisCache(ticker: string, year: number, quarter: nu
  * Optimized Raw Transcript Cache (Shared across languages)
  */
 export async function getTranscriptCache(ticker: string, year: number, quarter: number) {
-  const key = `transcript:${ticker.toUpperCase()}:${year}:${quarter}`;
+  const key = `transcript:v2:${ticker.toUpperCase()}:${year}:${quarter}`;
   
   // 1. Check Memory Cache
   const memData = getFromMemory(key);
@@ -162,7 +162,7 @@ export async function getTranscriptCache(ticker: string, year: number, quarter: 
 }
 
 export async function setTranscriptCache(ticker: string, year: number, quarter: number, transcript: string) {
-  const key = `transcript:${ticker.toUpperCase()}:${year}:${quarter}`;
+  const key = `transcript:v2:${ticker.toUpperCase()}:${year}:${quarter}`;
   const data = { transcript };
 
   // Save to memory
